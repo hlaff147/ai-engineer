@@ -4,6 +4,24 @@ A collection of AI/ML engineering projects exploring modern AI architectures, mu
 
 ---
 
+## 📚 Study Guide
+
+> 🎓 **[AI Engineer Study Guide](./AI_ENGINEER_STUDY_GUIDE.md)** — Comprehensive documentation on AI agent patterns, architectures, and engineering insights learned from building these projects.
+
+### Patterns Covered
+
+| # | Pattern | Description |
+|---|---------|-------------|
+| 01 | Reflection | Self-critique and iterative refinement |
+| 02 | Tool Use | External API integration for real-time data |
+| 03 | ReAct | Reason + Act interleaved loop |
+| 05 | Multi-Agent | Specialized agents collaborating |
+| 06 | PEV | Plan, Execute, Verify with auto-retry |
+| 11 | Meta-Controller | Intelligent routing to specialists |
+| 13 | Ensemble | Multiple perspectives, reduced bias |
+
+---
+
 ## 📁 Projects
 
 <details>
@@ -13,22 +31,33 @@ A collection of AI/ML engineering projects exploring modern AI architectures, mu
 
 ### [Autonomous Hedge Fund Bot](./hedge_fund_bot/)
 
-A multi-agent AI system for automated stock analysis and investment recommendations.
+A multi-agent AI system for automated stock analysis and investment recommendations with **self-correcting verification**.
 
-**Tech Stack:** `LangGraph` `LangChain` `Groq` `Llama 3.1 70B` `yFinance`
+**Tech Stack:** `LangGraph` `LangChain` `Groq` `Llama 3.3 70B` `yFinance`
+
+**Patterns Used:**
+| Pattern | Implementation |
+|---------|----------------|
+| 🔧 Tool Use | yfinance, DuckDuckGo search |
+| 🤖 Multi-Agent | Researcher, Chartist, Analyst, Verifier |
+| ✅ PEV | Verifier validates recommendations |
+| 🎯 Meta-Controller | Supervisor routes to specialists |
 
 **Features:**
 | Feature | Description |
 |---------|-------------|
-| 🤖 Multi-Agent | Supervisor, Researcher, Chartist, Analyst agents |
+| 🤖 Multi-Agent | Supervisor, Researcher, Chartist, Analyst, Verifier agents |
 | 📊 Technical Analysis | RSI, MACD, SMA indicators |
 | 📰 Sentiment Analysis | Real-time news and market sentiment |
 | 📝 Recommendations | Automated BUY/SELL/HOLD decisions |
+| ✅ Verification | Self-correcting analysis with retry logic |
 
 **Architecture:**
 ```
-User → Supervisor → Researcher → Chartist → Analyst → Report
-            ↑___________|____________|___________|
+User → Supervisor → Researcher → Chartist → Analyst → Verifier → Report
+            ↑___________|____________|          │         │
+            │                                   │    ❌ FAIL (retry)
+            └───────────────────────────────────┴─────────┘
 ```
 
 **Quick Start:**
@@ -40,7 +69,7 @@ cp .env.example .env  # Add GROQ_API_KEY
 python main.py
 ```
 
-📖 [Full Documentation](./hedge_fund_bot/docs/DOCUMENTATION.md) | 📊 [View Diagrams](./hedge_fund_bot/docs/diagrams/)
+📖 [Full Documentation](./hedge_fund_bot/docs/DOCUMENTATION.md) | 🧠 [Patterns Doc](./hedge_fund_bot/docs/PATTERNS.md) | 📊 [View Diagrams](./hedge_fund_bot/docs/diagrams/)
 
 </details>
 
