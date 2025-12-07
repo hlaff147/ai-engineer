@@ -15,12 +15,10 @@ from src.agents.researcher import researcher_node
 from src.agents.chartist import chartist_node
 from src.agents.analyst import analyst_node
 from src.agents.verifier import verifier_node
+from src.config import settings
 import logging
 
 logger = logging.getLogger(__name__)
-
-# Maximum retry attempts for failed verification
-MAX_VERIFICATION_RETRIES = 2
 
 
 def route_after_verification(state: AgentState) -> str:
@@ -38,8 +36,8 @@ def route_after_verification(state: AgentState) -> str:
         logger.info("Verification PASSED - workflow complete")
         return "FINISH"
     
-    if iteration_count < MAX_VERIFICATION_RETRIES:
-        logger.info(f"Verification FAILED - retrying (attempt {iteration_count + 1}/{MAX_VERIFICATION_RETRIES})")
+    if iteration_count < settings.MAX_VERIFICATION_RETRIES:
+        logger.info(f"Verification FAILED - retrying (attempt {iteration_count + 1}/{settings.MAX_VERIFICATION_RETRIES})")
         return "Analyst"
     
     logger.warning("Max verification retries exceeded - completing with warnings")

@@ -9,17 +9,15 @@ This agent validates the Analyst's recommendations by:
 """
 
 from langchain_core.messages import HumanMessage
-from langchain_groq import ChatGroq
 from src.state import AgentState
-import json
+from src.llm import get_strict_llm
+from src.config import AgentPrefix
+from src.schemas import parse_verifier_result, VERIFIER_FORMAT_INSTRUCTION
+from src.exceptions import LLMError, VerificationError
 import logging
 import re
 
 logger = logging.getLogger(__name__)
-
-
-def get_llm():
-    return ChatGroq(model="llama-3.3-70b-versatile", temperature=0, max_tokens=1500)
 
 
 VERIFIER_PROMPT = """You are a senior risk manager and quality assurance specialist at a hedge fund.
@@ -54,15 +52,7 @@ Your job is to VERIFY the analyst's report for consistency and accuracy.
    - Fundamental analysis (news) vs Technical analysis (indicators)
    - The recommendation vs the supporting evidence
 
-## OUTPUT FORMAT (JSON):
-{{
-    "is_valid": true/false,
-    "confidence_score": 0-100,
-    "issues_found": ["issue1", "issue2"],
-    "recommendations": ["suggestion1", "suggestion2"],
-    "verdict": "APPROVED" / "NEEDS_REVISION" / "REJECTED",
-    "summary": "Brief explanation of verification result"
-}}
+{format_instruction}
 
 Be strict but fair. Only mark as invalid if there are significant inconsistencies."""
 
@@ -151,6 +141,7 @@ def verifier_node(state: AgentState) -> dict:
     """Verify the analyst's report for consistency and accuracy."""
     ticker = state.get("current_ticker", "UNKNOWN")
     messages = state.get("messages", [])
+    current_iteration = state.get("iteration_count", 0)  # Track iteration for retry logic
     
     # Find analyst report
     analyst_report = None
@@ -176,44 +167,31 @@ def verifier_node(state: AgentState) -> dict:
     full_context = "\n\n---\n\n".join([msg.content for msg in messages[-6:]])
     
     try:
-        # LLM-based deep verification
+        # LLM-based deep verification (using centralized factory)
         prompt = VERIFIER_PROMPT.format(
             analyst_report=analyst_report,
-            full_context=full_context
+            full_context=full_context,
+            format_instruction=VERIFIER_FORMAT_INSTRUCTION
         )
         
-        response = get_llm().invoke([HumanMessage(content=prompt)])
+        response = get_strict_llm().invoke([HumanMessage(content=prompt)])
         text = response.content.strip()
         
-        # Parse JSON response
-        if "```" in text:
-            text = text.split("```")[1].replace("json", "").strip()
-        
-        try:
-            result = json.loads(text)
-        except json.JSONDecodeError:
-            # Fallback if JSON parsing fails
-            result = {
-                "is_valid": len(quick_issues) == 0,
-                "confidence_score": 70,
-                "issues_found": quick_issues,
-                "verdict": "APPROVED" if len(quick_issues) == 0 else "NEEDS_REVISION",
-                "summary": text[:500]
-            }
+        # Use structured parsing from schemas module
+        result = parse_verifier_result(text, quick_issues=quick_issues)
         
         # Merge quick issues with LLM findings
-        all_issues = list(set(quick_issues + result.get("issues_found", [])))
-        result["issues_found"] = all_issues
+        all_issues = list(set(quick_issues + result.issues_found))
         
         # Determine if verification passed
-        is_valid = result.get("is_valid", True) and result.get("verdict") != "REJECTED"
-        confidence = result.get("confidence_score", 70)
+        is_valid = result.is_valid and result.verdict != "REJECTED"
+        confidence = result.confidence_score
         
         # Build verification report
         verification_report = f"""[VERIFIER - {'✅ APPROVED' if is_valid else '⚠️ NEEDS REVIEW'}]
 
 **Ticker:** {ticker}
-**Verdict:** {result.get('verdict', 'UNKNOWN')}
+**Verdict:** {result.verdict}
 **Confidence Score:** {confidence}/100
 
 ## Verification Results
@@ -228,23 +206,42 @@ def verifier_node(state: AgentState) -> dict:
 {chr(10).join([f"- ⚠️ {issue}" for issue in all_issues]) if all_issues else "- ✅ No significant issues detected"}
 
 ### Recommendations
-{chr(10).join([f"- 💡 {rec}" for rec in result.get('recommendations', [])]) if result.get('recommendations') else "- No additional recommendations"}
+{chr(10).join([f"- 💡 {rec}" for rec in result.recommendations]) if result.recommendations else "- No additional recommendations"}
 
 ### Summary
-{result.get('summary', 'Verification complete.')}
+{result.summary}
 """
         
-        logger.info(f"Verifier executed for {ticker}: {result.get('verdict')}")
+        logger.info(f"Verifier executed for {ticker}: {result.verdict}")
+        
+        # INCREMENT iteration_count when verification fails (for retry limiting)
+        new_iteration = current_iteration + 1 if not is_valid else current_iteration
         
         return {
             "messages": [HumanMessage(content=verification_report)],
             "verification_passed": is_valid,
-            "verification_result": result
+            "verification_result": result.model_dump(),  # Convert Pydantic model to dict
+            "iteration_count": new_iteration  # Track retries to prevent infinite loops
         }
     
+    except LLMError as e:
+        logger.error(f"Verifier LLM error: {e}")
+        return {
+            "messages": [HumanMessage(content=f"[VERIFIER ERROR] LLM parsing failed: {str(e)}")],
+            "verification_passed": True,  # Don't block on verification errors
+            "iteration_count": current_iteration
+        }
+    except VerificationError as e:
+        logger.error(f"Verifier validation error: {e}")
+        return {
+            "messages": [HumanMessage(content=f"[VERIFIER ERROR] Validation failed: {str(e)}")],
+            "verification_passed": False,
+            "iteration_count": current_iteration + 1
+        }
     except Exception as e:
-        logger.error(f"Verifier error: {e}")
+        logger.error(f"Verifier unexpected error: {e}")
         return {
             "messages": [HumanMessage(content=f"[VERIFIER ERROR] {str(e)}")],
-            "verification_passed": True  # Don't block on verification errors
+            "verification_passed": True,  # Don't block on unexpected errors
+            "iteration_count": current_iteration
         }

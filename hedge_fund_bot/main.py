@@ -9,6 +9,8 @@ from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage
 from src.graph import create_graph
 from src.state import AgentState
+from src.config import settings, AgentPrefix
+from src.validation import validate_ticker
 
 load_dotenv()
 
@@ -22,6 +24,13 @@ if not os.getenv("GROQ_API_KEY"):
 
 def run_analysis(ticker: str) -> dict:
     """Run complete stock analysis."""
+    # Validate ticker input (fail-fast pattern)
+    try:
+        ticker = validate_ticker(ticker)
+    except ValueError as e:
+        print(f"❌ {e}")
+        return {"messages": [], "error": str(e)}
+    
     print(f"\nStarting analysis for {ticker}...")
     
     graph = create_graph()
@@ -32,10 +41,12 @@ def run_analysis(ticker: str) -> dict:
         "current_ticker": ticker,
         "current_stock_data": {},
         "iteration_count": 0,
+        "verification_passed": False,
+        "verification_result": {},
     }
     
     try:
-        return graph.invoke(initial_state, config={"recursion_limit": 25})
+        return graph.invoke(initial_state, config={"recursion_limit": settings.RECURSION_LIMIT})
     except Exception as e:
         logger.error(f"Analysis error: {e}")
         return initial_state
@@ -43,13 +54,16 @@ def run_analysis(ticker: str) -> dict:
 
 def print_report(state: dict) -> None:
     """Display final report."""
+    if state.get("error"):
+        return  # Error already printed
+    
     print("\n" + "="*60)
     print("FINAL REPORT")
     print("="*60 + "\n")
     
     for msg in state.get("messages", []):
-        if "[ANALYST" in msg.content:
-            print(msg.content.replace("[ANALYST - FINAL REPORT]\n\n", ""))
+        if AgentPrefix.ANALYST in msg.content:
+            print(msg.content.replace(f"{AgentPrefix.ANALYST} - FINAL REPORT]\n\n", ""))
             break
 
 

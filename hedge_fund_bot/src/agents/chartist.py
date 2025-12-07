@@ -1,36 +1,15 @@
 """Chartist Agent - Technical analysis using yfinance"""
 
 from langchain_core.messages import HumanMessage
-from langchain_groq import ChatGroq
 from src.state import AgentState
+from src.tools.financial_tools import get_latest_rsi, get_latest_macd
+from src.llm import get_strict_llm
+from src.config import settings, AgentPrefix
+from src.exceptions import DataFetchError, LLMError, format_error_for_user
 import yfinance as yf
-import pandas as pd
 import logging
 
 logger = logging.getLogger(__name__)
-
-
-def get_llm():
-    return ChatGroq(model="llama-3.3-70b-versatile", temperature=0, max_tokens=1500)
-
-
-def calculate_rsi(df: pd.DataFrame, period: int = 14) -> float:
-    """Calculate RSI."""
-    delta = df['Close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-    rs = gain / loss
-    rsi = 100 - (100 / (1 + rs))
-    return rsi.iloc[-1]
-
-
-def calculate_macd(df: pd.DataFrame) -> dict:
-    """Calculate MACD."""
-    ema12 = df['Close'].ewm(span=12, adjust=False).mean()
-    ema26 = df['Close'].ewm(span=26, adjust=False).mean()
-    macd = ema12 - ema26
-    signal = macd.ewm(span=9, adjust=False).mean()
-    return {"macd": macd.iloc[-1], "signal": signal.iloc[-1], "histogram": (macd - signal).iloc[-1]}
 
 
 CHARTIST_PROMPT = """You are a technical analyst. Analyze these indicators for {ticker}:
@@ -54,49 +33,65 @@ def chartist_node(state: AgentState) -> dict:
     ticker_yf = ticker if ticker.endswith(".SA") or "." in ticker else ticker
     
     try:
-        # Fetch data
+        # Fetch data (using config for period)
         stock = yf.Ticker(ticker_yf)
-        df = stock.history(period="3mo")
+        df = stock.history(period=settings.HISTORY_PERIOD)
         
         if df.empty:
             # Try with .SA suffix for Brazilian stocks
             ticker_yf = f"{ticker}.SA"
             stock = yf.Ticker(ticker_yf)
-            df = stock.history(period="3mo")
+            df = stock.history(period=settings.HISTORY_PERIOD)
         
         if df.empty:
-            return {"messages": [HumanMessage(content=f"[CHARTIST - {ticker}]\n\nNo data available for {ticker}")]}
+            raise DataFetchError(
+                f"No data available for {ticker}",
+                source="yfinance",
+                ticker=ticker,
+                agent_name="Chartist"
+            )
         
-        # Calculate indicators
+        # Calculate indicators (using centralized functions and config)
         current_price = df['Close'].iloc[-1]
-        price_change = ((current_price - df['Close'].iloc[-20]) / df['Close'].iloc[-20]) * 100
-        sma20 = df['Close'].rolling(20).mean().iloc[-1]
-        rsi = calculate_rsi(df)
-        macd = calculate_macd(df)
-        high_30d = df['High'].tail(30).max()
-        low_30d = df['Low'].tail(30).min()
+        price_change = ((current_price - df['Close'].iloc[-settings.PRICE_CHANGE_DAYS]) / df['Close'].iloc[-settings.PRICE_CHANGE_DAYS]) * 100
+        sma = df['Close'].rolling(settings.SMA_PERIOD).mean().iloc[-1]
+        rsi = get_latest_rsi(df, period=settings.RSI_PERIOD)
+        macd = get_latest_macd(df, fast=settings.MACD_FAST, slow=settings.MACD_SLOW, signal=settings.MACD_SIGNAL)
+        high_nd = df['High'].tail(settings.SUPPORT_RESISTANCE_DAYS).max()
+        low_nd = df['Low'].tail(settings.SUPPORT_RESISTANCE_DAYS).min()
         
         technical_data = f"""
 Current Price: ${current_price:.2f}
-20-day Price Change: {price_change:.1f}%
-SMA 20: ${sma20:.2f}
-RSI (14): {rsi:.1f}
+{settings.PRICE_CHANGE_DAYS}-day Price Change: {price_change:.1f}%
+SMA {settings.SMA_PERIOD}: ${sma:.2f}
+RSI ({settings.RSI_PERIOD}): {rsi:.1f}
 MACD: {macd['macd']:.4f}
 MACD Signal: {macd['signal']:.4f}
 MACD Histogram: {macd['histogram']:.4f}
-30-day High (Resistance): ${high_30d:.2f}
-30-day Low (Support): ${low_30d:.2f}
-Price vs SMA20: {'Above' if current_price > sma20 else 'Below'}
+{settings.SUPPORT_RESISTANCE_DAYS}-day High (Resistance): ${high_nd:.2f}
+{settings.SUPPORT_RESISTANCE_DAYS}-day Low (Support): ${low_nd:.2f}
+Price vs SMA{settings.SMA_PERIOD}: {'Above' if current_price > sma else 'Below'}
 """
         
-        # Generate analysis with LLM
+        # Generate analysis with LLM (using centralized factory)
         prompt = CHARTIST_PROMPT.format(ticker=ticker, technical_data=technical_data)
-        response = get_llm().invoke([HumanMessage(content=prompt)])
+        response = get_strict_llm().invoke([HumanMessage(content=prompt)])
         
         logger.info(f"Chartist executed for {ticker}")
         
-        return {"messages": [HumanMessage(content=f"[CHARTIST - {ticker}]\n\n{technical_data}\n\nANALYSIS:\n{response.content}")]}
+        return {"messages": [HumanMessage(content=f"{AgentPrefix.CHARTIST} - {ticker}]\n\n{technical_data}\n\nANALYSIS:\n{response.content}")]}
+    
+    except DataFetchError as e:
+        # Specific handling for data fetch errors
+        logger.warning(f"Chartist data fetch error: {e}", exc_info=True)
+        return {"messages": [HumanMessage(content=f"{AgentPrefix.CHARTIST} ERROR] {format_error_for_user(e)}")]}
+    
+    except LLMError as e:
+        # Specific handling for LLM errors
+        logger.error(f"Chartist LLM error: {e}", exc_info=True)
+        return {"messages": [HumanMessage(content=f"{AgentPrefix.CHARTIST} ERROR] {format_error_for_user(e)}")]}
     
     except Exception as e:
-        logger.error(f"Chartist error: {e}")
-        return {"messages": [HumanMessage(content=f"[CHARTIST ERROR] {str(e)}")]}
+        # Catch-all for unexpected errors (log full stack trace)
+        logger.error(f"Chartist unexpected error: {e}", exc_info=True)
+        return {"messages": [HumanMessage(content=f"{AgentPrefix.CHARTIST} ERROR] Unexpected error: {str(e)}")]}
