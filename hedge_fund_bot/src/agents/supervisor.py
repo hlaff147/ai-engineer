@@ -1,6 +1,4 @@
-"""
-Supervisor Agent - Routes workflow based on current state
-"""
+"""Supervisor Agent - Routes workflow based on current state"""
 
 from langchain_core.messages import HumanMessage
 from langchain_groq import ChatGroq
@@ -10,7 +8,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-llm = ChatGroq(model="llama-3.1-70b-versatile", temperature=0, max_tokens=256)
+
+def get_llm():
+    return ChatGroq(model="llama-3.3-70b-versatile", temperature=0, max_tokens=256)
 
 SUPERVISOR_PROMPT = """You are a senior hedge fund manager.
 
@@ -42,7 +42,7 @@ def supervisor_node(state: AgentState) -> dict:
     )
     
     try:
-        response = llm.invoke([HumanMessage(content=prompt)])
+        response = get_llm().invoke([HumanMessage(content=prompt)])
         text = response.content.strip()
         
         if "```" in text:

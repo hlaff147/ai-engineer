@@ -3,7 +3,6 @@ LangGraph Workflow - Multi-agent orchestration
 """
 
 from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.memory import MemorySaver
 from src.state import AgentState
 from src.agents.supervisor import supervisor_node
 from src.agents.researcher import researcher_node
@@ -38,4 +37,4 @@ def create_graph():
     
     workflow.set_entry_point("Supervisor")
     
-    return workflow.compile(checkpointer=MemorySaver())
+    return workflow.compile()

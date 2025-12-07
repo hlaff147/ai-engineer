@@ -1,6 +1,4 @@
-"""
-Analyst Agent - Synthesizes final investment report
-"""
+"""Analyst Agent - Synthesizes final investment report"""
 
 from langchain_core.messages import HumanMessage
 from langchain_groq import ChatGroq
@@ -9,7 +7,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-llm = ChatGroq(model="llama-3.1-70b-versatile", temperature=0.4, max_tokens=1500)
+
+def get_llm():
+    return ChatGroq(model="llama-3.3-70b-versatile", temperature=0.4, max_tokens=1500)
 
 ANALYST_PROMPT = """You are a senior portfolio manager. Write a final investment report.
 
@@ -35,7 +35,7 @@ def analyst_node(state: AgentState) -> dict:
     context = "\n".join([f"{m.type}: {m.content[:200]}..." for m in state.get("messages", [])[-5:]])
     
     try:
-        response = llm.invoke([HumanMessage(content=ANALYST_PROMPT.format(ticker=ticker, context=context))])
+        response = get_llm().invoke([HumanMessage(content=ANALYST_PROMPT.format(ticker=ticker, context=context))])
         logger.info(f"Analyst executed for {ticker}")
         
         return {"messages": [HumanMessage(content=f"[ANALYST - FINAL REPORT]\n\n{response.content}")]}

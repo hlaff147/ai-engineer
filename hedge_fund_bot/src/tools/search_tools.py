@@ -12,15 +12,8 @@ logger = logging.getLogger(__name__)
 def search_financial_news(query: str, max_results: int = 5) -> List[Dict]:
     """Search financial news using DuckDuckGo."""
     try:
-        ddgs = DDGS()
-        results = ddgs.text(
-            keywords=query,
-            region="wt-wt",
-            safesearch="moderate",
-            timelimit="m",
-            max_results=max_results
-        )
-        return results if results else []
+        results = DDGS().text(query, max_results=max_results)
+        return list(results) if results else []
     except Exception as e:
         logger.error(f"Error searching news: {str(e)}")
         return []
